@@ -1,12 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
 using ContactWebModels;
 using MyContactMangerData;
+using ContactWeb.Models;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace ContactWeb.Controllers
 {
@@ -15,12 +13,26 @@ namespace ContactWeb.Controllers
         private readonly MyContactManagerDbContext _context;
         private static List<State> _allStates;
         private static SelectList _statesData;
+        private IMemoryCache _cache;
 
-        public ContactsController(MyContactManagerDbContext context)
+
+        public ContactsController(MyContactManagerDbContext context, IMemoryCache cache)
         {
             _context = context;
-            _allStates = Task.Run(() => _context.States.ToListAsync()).Result;
+            _cache = cache;
+            SetAllStatesCachingData();
             _statesData = new SelectList(_allStates, "Id", "Abbreviation");
+        }
+        private void SetAllStatesCachingData()
+        {
+            var allStates = new List<State>();
+            if (!_cache.TryGetValue(ContactCacheConstants.ALL_STATES, out allStates))
+            {
+                var allStatesData = Task.Run(() => _context.States.ToListAsync()).Result;
+                _cache.Set(ContactCacheConstants.ALL_STATES, allStatesData, TimeSpan.FromDays(1));
+                allStates = _cache.Get(ContactCacheConstants.ALL_STATES) as List<State>;
+            }
+            _allStates = allStates;
         }
         private async Task UpdateStateAndRestModelState(Contact contact)
         {
@@ -73,6 +85,9 @@ namespace ContactWeb.Controllers
             UpdateStateAndRestModelState(contact);
             if (ModelState.IsValid)
             {
+                //hack to get the state hydrated    
+                var state = await _context.States.SingleOrDefaultAsync(x => x.Id == contact.StateId);
+                contact.State = state;
                 await _context.Contacts.AddAsync(contact);
                 await _context.SaveChangesAsync();
                 return RedirectToAction(nameof(Index));
